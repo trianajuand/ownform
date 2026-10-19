@@ -167,8 +167,8 @@ These commands cover the current setup and code-quality checks. **The applicatio
 
 Project documentation and technical decisions will be maintained alongside the code.
 
-- [Database Design](docs/database-design.md) — Planned database schema and relationships.
-- [Architecture Decision Records](docs/decisions/) — Technical decisions, their reasoning, and their consequences.
+- [Database Design](docs/002-database-design.md) — Planned database schema and relationships.
+- [Architecture Decision Records](docs/decisions/001-architecture.md) — Technical decisions, their reasoning, and their consequences.
 
 ## Roadmap
 

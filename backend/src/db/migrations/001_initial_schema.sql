@@ -1,7 +1,7 @@
 -- Ownform: 001_initial_schema.sql
 --
 -- Core tables (shared by every module): users, modules, stats, actions
--- Gym module tables:                    exercises, workouts, workout_sets
+-- Gym module tables:                    gym_profiles, exercises, workouts, workout_sets
 --
 -- Requirements:
 --   * SQLite >= 3.37.0 (STRICT tables).
@@ -67,6 +67,14 @@ CREATE INDEX idx_actions_user_module_day ON actions (user_id, module, occurred_o
 -- GYM MODULE
 -- ============================================================
 
+-- One row per user: the training focus chosen at the start (it can be changed later).
+-- It decides which reps make a set valid for XP (rules live in the XP config, keyed by
+-- these same two names). A third focus would need a table rebuild (decision D15).
+CREATE TABLE gym_profiles (
+  user_id        INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  training_focus TEXT    NOT NULL CHECK (training_focus IN ('strength', 'hypertrophy'))
+) STRICT;
+
 -- Global catalog loaded by a seed script. No user-owned exercises in the MVP.
 CREATE TABLE exercises (
   id           INTEGER PRIMARY KEY,
@@ -76,10 +84,14 @@ CREATE TABLE exercises (
 
 -- AUTOINCREMENT: ids are never reused, so a stale actions.reference_id can
 -- never silently point to an unrelated new row.
+-- performed_on is the user's local calendar day (streaks, weeks and the daily cap use it).
+-- started_at is a UTC timestamp: the 4-hour logging window is measured from it. One cannot
+-- be derived from the other because the time zone is not stored (decision D13).
 CREATE TABLE workouts (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id      INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   performed_on TEXT    NOT NULL CHECK (date(performed_on) IS performed_on),
+  started_at   TEXT    NOT NULL CHECK (strftime('%Y-%m-%dT%H:%M:%SZ', started_at) IS started_at),
   duration_min INTEGER NOT NULL CHECK (duration_min BETWEEN 1 AND 600),
   notes        TEXT,
   created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -89,6 +101,8 @@ CREATE INDEX idx_workouts_user_day ON workouts (user_id, performed_on);
 
 -- Junction table between workouts and exercises (N:M) that carries its own data.
 -- Bodyweight exercises store weight_kg = 0.
+-- is_warmup = 1 marks a warm-up set (strength focus only). Warm-up sets earn no XP and are
+-- ignored by personal-record detection (decision D14).
 CREATE TABLE workout_sets (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   workout_id  INTEGER NOT NULL REFERENCES workouts (id) ON DELETE CASCADE,
@@ -96,6 +110,7 @@ CREATE TABLE workout_sets (
   position    INTEGER NOT NULL CHECK (position >= 1),
   reps        INTEGER NOT NULL CHECK (reps BETWEEN 1 AND 500),
   weight_kg   REAL    NOT NULL CHECK (weight_kg >= 0 AND weight_kg <= 1000),
+  is_warmup   INTEGER NOT NULL DEFAULT 0 CHECK (is_warmup IN (0, 1)),
   UNIQUE (workout_id, position)
 ) STRICT;
 

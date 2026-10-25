@@ -1,12 +1,13 @@
 # Ownform: Database Design
 
-**Status:** draft v0.2, written for the project owner's review. Nothing here is final until the owner approves it.
+**Status:** draft v0.3, written for the project owner's review. The owner has answered the business questions O1 to O9 (section 8) and approved the schema changes of v0.3.
 **Changes in v0.2:** added the `modules` registry table (D12) after a review question from the owner, and updated D6, the diagram, the dictionary, the normalization analysis and section 9.1. Added sections 9.4 and 9.5.
-**Date:** 2026-10-19
+**Changes in v0.3:** three additions after the XP rules were decided (`xp-rules.md`): `workouts.started_at` (D13), `workout_sets.is_warmup` (D14) and the `gym_profiles` table (D15). Migration 001 was edited in place because no database had been created from it yet (D10). O1 to O9 are answered (section 8). The references to Appendices A and B, which did not exist, were replaced by a real Appendix A with tested queries. Sections 7 and 9.2 were updated.
+**Date:** 2026-10-22
 **Scope:** MVP (gym module) plus the seams needed so later modules (Books, Style, Confidence) can be added without redesigning the core.
 **Based on:** the project document (sections 5, 7, 9.7 and 10). Where this design differs from section 9.7, the difference is listed in section 6.
 
-How to read this: sections 1 and 2 explain the concepts and principles. Sections 3 to 5 are the design itself. Section 6 lists every decision with its alternatives, and section 8 lists the open questions that need an answer from the owner. The SQL is in Appendix A and was executed and tested (section 9).
+How to read this: sections 1 and 2 explain the concepts and principles. Sections 3 to 5 are the design itself. Section 6 lists every decision with its alternatives, and section 8 lists the open questions that need an answer from the owner. The SQL is in `backend/src/db/migrations/001_initial_schema.sql` and was executed and tested (section 9). Appendix A has the example queries.
 
 ---
 
@@ -86,6 +87,7 @@ erDiagram
     MODULES ||--o{ STATS : "registers"
     STATS ||--o{ ACTIONS : "logs"
     USERS ||--o{ WORKOUTS : "performs"
+    USERS ||--o| GYM_PROFILES : "chooses a focus"
     WORKOUTS ||--|{ WORKOUT_SETS : "contains"
     EXERCISES ||--o{ WORKOUT_SETS : "appears in"
 
@@ -124,6 +126,7 @@ erDiagram
         integer id PK
         integer user_id FK
         text performed_on
+        text started_at
         integer duration_min
         text notes
         text created_at
@@ -135,6 +138,11 @@ erDiagram
         integer position
         integer reps
         real weight_kg
+        integer is_warmup
+    }
+    GYM_PROFILES {
+        integer user_id PK, FK
+        text training_focus
     }
 ```
 
@@ -146,6 +154,7 @@ erDiagram
 | modules → stats | 1:N | A module has 0..N stats (one per user who activated it). Each stat belongs to exactly 1 registered module. | `stats.module` | Database |
 | stats → actions | 1:N | A stat has 0..N actions. Each action belongs to exactly 1 stat (user and module). | `actions (user_id, module)` | Database (composite FK) |
 | users → workouts | 1:N | A user has 0..N workouts. Each workout belongs to exactly 1 user. | `workouts.user_id` | Database |
+| users → gym_profiles | 1:1 | A user has 0..1 gym profile. Each profile belongs to exactly 1 user. | `gym_profiles.user_id` (also its primary key) | Database. The rule "the profile is created at registration" is in the service. |
 | workouts → workout_sets | 1:N | A workout has 1..N sets. Each set belongs to exactly 1 workout. | `workout_sets.workout_id` | Database for "exactly 1 workout". The "at least 1 set" rule is in the service. |
 | exercises → workout_sets | 1:N | An exercise appears in 0..N sets. Each set uses exactly 1 exercise. | `workout_sets.exercise_id` | Database |
 | workouts ↔ exercises | **N:M** | A workout includes many exercises, and an exercise appears in many workouts. | resolved by `workout_sets` | Database |
@@ -230,7 +239,8 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 |---|---|---|---|
 | `id` | INTEGER | no | Primary key, `AUTOINCREMENT` (ids never reused, see D4) |
 | `user_id` | INTEGER | no | FK to `users`, `ON DELETE CASCADE` |
-| `performed_on` | TEXT | no | Calendar day of the session, validated as a real date |
+| `performed_on` | TEXT | no | Calendar day of the session (the user's local day), validated as a real date |
+| `started_at` | TEXT | no | UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) of the moment the workout started, sent by the client. The 4-hour logging window is measured from it (D13) |
 | `duration_min` | INTEGER | no | 1 to 600 (loose safety net) |
 | `notes` | TEXT | yes | Free text |
 | `created_at` | TEXT | no | UTC timestamp, default now |
@@ -251,6 +261,7 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 | `position` | INTEGER | no | `>= 1`. Order of the set in the workout. Unique with `workout_id` |
 | `reps` | INTEGER | no | 1 to 500 (loose safety net) |
 | `weight_kg` | REAL | no | 0 to 1000. Bodyweight exercises store 0 |
+| `is_warmup` | INTEGER | no | `0` or `1`, default 0. `1` marks a warm-up set (strength focus only), which earns no XP and is ignored by record detection (D14) |
 
 **Indexes:** the `UNIQUE (workout_id, position)` constraint creates one on `workout_id`. `idx_workout_sets_exercise (exercise_id)` serves personal-record detection.
 
@@ -265,6 +276,19 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 | `code` | TEXT | no | Primary key. Stable lowercase identifier, for example `'gym'`. 1 to 50 characters |
 
 Modules are registered by migrations, never by users. Migration 001 registers `gym`. See D12.
+
+### 4.8 `gym_profiles` (gym)
+
+**Purpose:** the training focus each user chose (strength or hypertrophy). It decides which reps make a set valid for XP.
+**Grain:** one row per user.
+**Candidate keys:** `user_id`.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `user_id` | INTEGER | no | Primary key and FK to `users`, `ON DELETE CASCADE` |
+| `training_focus` | TEXT | no | `'strength'` or `'hypertrophy'` (CHECK). The user can change it later; past XP is not recalculated (D15) |
+
+The row is created at registration, when the user chooses the focus. The demo seed must create one too.
 
 ---
 
@@ -287,15 +311,16 @@ Method: for each table, state the grain, the candidate keys and the functional d
 
 ### 5.3 `workouts`
 
-- Dependencies: `id → user_id, performed_on, duration_min, notes, created_at`.
+- Dependencies: `id → user_id, performed_on, started_at, duration_min, notes, created_at`.
 - **1NF, 2NF, 3NF, BCNF:** satisfied. No other column set is a determinant.
 - Note: `(user_id, performed_on)` does not determine the row, so it is correctly not a key.
+- Note: `performed_on` and `started_at` look related, but one does not determine the other. The user's time zone is not stored, so `started_at → performed_on` is not a dependency. Keeping both is not a 3NF violation (D13).
 
 ### 5.4 `workout_sets`
 
-- Dependencies: `id → everything` and `(workout_id, position) → id, exercise_id, reps, weight_kg`.
+- Dependencies: `id → everything` and `(workout_id, position) → id, exercise_id, reps, weight_kg, is_warmup`.
 - **1NF:** one row per set, no repeating columns.
-- **2NF:** a candidate key is composite, so this check is meaningful. The non-prime columns (`exercise_id`, `reps`, `weight_kg`) depend on the **whole** `(workout_id, position)`: `workout_id` alone does not determine reps, and neither does `position` alone.
+- **2NF:** a candidate key is composite, so this check is meaningful. The non-prime columns (`exercise_id`, `reps`, `weight_kg`, `is_warmup`) depend on the **whole** `(workout_id, position)`: `workout_id` alone does not determine reps, and neither does `position` alone.
 - **3NF and BCNF:** no non-key column determines another. In particular, `exercise_id` does not determine `reps` or `weight_kg`.
 - This table is where the main normalization win happens: the exercise name and muscle group are stored **once** in `exercises`, not copied into every set. That removes the update, insert and delete anomalies from section 1.1.
 
@@ -320,15 +345,21 @@ Method: for each table, state the grain, the candidate keys and the functional d
 - **1NF to BCNF:** satisfied trivially.
 - A one-column table is a standard **reference (lookup) table**. It exists so other tables can point to it, which turns a free-text value into a validated one.
 
-### 5.8 Summary
+### 5.8 `gym_profiles`
+
+- Dependencies: `user_id → training_focus`.
+- **1NF to BCNF:** satisfied. The only determinant is the key, and the focus depends on nothing else.
+
+### 5.9 Summary
 
 | Table | 1NF | 2NF | 3NF | BCNF | Remarks |
 |---|---|---|---|---|---|
 | `users` | yes | yes | yes | yes | |
 | `modules` | yes | yes | yes | yes | Reference (lookup) table |
 | `exercises` | yes | yes | yes | yes | |
-| `workouts` | yes | yes | yes | yes | |
+| `workouts` | yes | yes | yes | yes | `started_at` and `performed_on` are independent (D13) |
 | `workout_sets` | yes | yes | yes | yes | Composite candidate key checked |
+| `gym_profiles` | yes | yes | yes | yes | One row per user |
 | `stats` | yes | yes | yes | yes | Because `level` is dropped (D2). `total_xp` is a documented derived value (D3) |
 | `actions` | yes | yes | accepted exception | accepted exception | `type → module` in practice (D7) |
 
@@ -358,7 +389,7 @@ Each decision states the context, the options and the recommendation. All are re
 - **Context:** `total_xp` equals `SUM(actions.xp_awarded)` per user and module. Reading it from `stats` is simple and fast, and the project document updates it inside the workout transaction (7.3).
 - **Source of truth:** `actions`.
 - **Keeping it consistent:** it is only written inside the same transaction that inserts the actions, so the two cannot diverge through the normal code path.
-- **Detecting drift:** the integrity query in Appendix B finds any user and module where the two disagree.
+- **Detecting drift:** the integrity query in Appendix A finds any user and module where the two disagree.
 - **Repairing drift:** a "recompute stats from actions" function rewrites `total_xp` from the log.
 - **A precision about "recalculating if rules change":** if only the **level curve** changes, `total_xp` is enough. If the **XP amounts** per event change, past awards in the log were computed with the old values, so a recalculation means replaying the stored workouts through the new engine and writing new log entries. The log makes either case auditable, but the second case is a replay and not a simple sum.
 
@@ -392,8 +423,8 @@ Each decision states the context, the options and the recommendation. All are re
 
 ### D8. Dates and times
 
-- **Decision:** ISO 8601 `TEXT`, because SQLite has no date type. Calendar days (`performed_on`, `occurred_on`) are `YYYY-MM-DD` and are checked to be real dates with `CHECK (date(col) IS col)`. Timestamps (`created_at`) are UTC `YYYY-MM-DDTHH:MM:SSZ`.
-- **Meaning:** a calendar day is the user's **local** day as chosen in the form, not the server's UTC day. See open question O6 for the "no future dates" rule.
+- **Decision:** ISO 8601 `TEXT`, because SQLite has no date type. Calendar days (`performed_on`, `occurred_on`) are `YYYY-MM-DD` and are checked to be real dates with `CHECK (date(col) IS col)`. Timestamps (`created_at`, `started_at`) are UTC `YYYY-MM-DDTHH:MM:SSZ`. `started_at` is validated with `CHECK (strftime(...) IS col)`.
+- **Meaning:** a calendar day is the user's **local** day as chosen in the form, not the server's UTC day. The rule about future or old dates is now a 4-hour logging window measured from `started_at` (D13), which replaced the date-based O6 rule.
 
 ### D9. Type strictness, foreign keys and constraints
 
@@ -405,6 +436,7 @@ Each decision states the context, the options and the recommendation. All are re
 
 - **Context:** the project document lists "esquema SQL, migraciones, seed" under `db/`. Once real data exists, an existing `CREATE TABLE` must not be edited.
 - **Decision:** the initial schema is `backend/src/db/migrations/001_initial_schema.sql` (instead of a separate `schema.sql`), so there is one source of truth. Later modules add `002_...`, `003_...`. Applied migrations are immutable. How applied versions are tracked (`PRAGMA user_version` or a `schema_migrations` table) is decided in Phase 1 with the migration runner.
+- **Exception in v0.3:** migration 001 was edited in place to add D13 to D15, because no database had been created from it yet (no migration runner, no data, nothing deployed). From the first database created with it, 001 is immutable and every change goes in a new file. This is why the edit was possible: adding a `NOT NULL` column without a default by `ALTER TABLE` works on an empty table and fails once the table has rows (tested on SQLite 3.45.1).
 - **Seeds** (exercise catalog, demo data) are separate from migrations.
 
 ### D11. Delete behavior
@@ -426,17 +458,43 @@ The MVP exposes no delete endpoints. These rules protect the data once they exis
 - **Consequences:** adding a module no longer relies on application code to keep names valid, the list of modules is one visible list in the database, and there is one more small table.
 - **Deviation from 9.7:** new table.
 
+### D13. Add `workouts.started_at` (v0.3)
+
+- **Context:** the owner wants workouts logged in real time (web first, mobile app later) and XP only if the workout is saved within 4 hours after it started (`xp-rules.md`, section 4). The schema stored only a calendar day, which cannot measure hours.
+- **Decision:** a `NOT NULL` UTC timestamp column `started_at`, sent by the client when the user starts logging. The end time is not stored: it is `started_at` plus `duration_min` (this proposal is still open in `xp-rules.md`, section 7).
+- **Why `performed_on` stays:** streaks, weeks and the daily cap use the user's **local** calendar day. The time zone is not stored, so the local day cannot be derived from the UTC timestamp. Keeping both is not a normalization problem (5.3). The service checks that they agree: `performed_on` must be within one day of the UTC date of `started_at`.
+- **What the database does not do:** it does not check the 4-hour window or that the start is not in the future. Both depend on the server clock and on a configured value, so they live in the service. The value comes from the client, so it can be faked. The owner accepts that: the limits guide the user and are not a security barrier.
+- **Replaces:** the date-based rule of O6.
+
+### D14. Add `workout_sets.is_warmup` (v0.3)
+
+- **Context:** with the strength focus, the user can log warm-up sets that earn no XP and must not count for records.
+- **Decision:** `is_warmup INTEGER NOT NULL DEFAULT 0 CHECK (is_warmup IN (0, 1))`. STRICT tables have no boolean type, so 0 and 1 is the convention. Set counting and record detection filter `is_warmup = 0` (Appendix A).
+- **Rejected:** a separate table for warm-up sets. It would repeat the structure of `workout_sets` for one flag.
+- **Not enforced by the database:** that only strength users flag warm-up sets. The service does it.
+
+### D15. Add the `gym_profiles` table (v0.3)
+
+- **Context:** the user chooses strength or hypertrophy at the start and can change it later. The focus decides which reps make a set valid.
+- **Options:** (A) a column in `users`, which breaks principle 2 because a core table would hold gym data; (B) a gym table; (C) a column in `stats`, which is also core.
+- **Decision:** B. `gym_profiles (user_id PK, FK to users, ON DELETE CASCADE; training_focus TEXT NOT NULL CHECK IN ('strength', 'hypertrophy'))`. The row is created at registration.
+- **Why a list in the CHECK, despite principle 5:** principle 5 warns against hardcoded lists of modules because modules are added often. The focus is a gym-internal choice with two values that the XP configuration also names, and a typo would silently break the rep-range lookup. Adding a third focus would mean rebuilding this one small table, which is accepted.
+- **Consequence:** changing the focus affects only future workouts. Past XP in `actions` is not recalculated.
+
 ---
 
 ## 7. Rules the database does not enforce
 
-These live in the XP engine, services or middleware, by design (principle 4):
+These live in the XP engine, services or middleware, by design (principle 4). The values are in the XP configuration; the rules are in `xp-rules.md`.
 
-- Minimum 3 sets for the workout base XP, and at most 20 sets counted per session.
-- At most 3 personal records rewarded per session.
-- The 150 XP daily cap and the 2 sessions with XP per day.
-- No workouts dated in the future.
-- The weekly streak bonus, once per week.
+- The minimum of valid sets for the base XP (strength 1, hypertrophy 3), and the sets that count: up to 8 per exercise for strength and up to 20 per workout in total.
+- Which sets are valid: reps inside the range of the user's training focus (strength 1 to 3, hypertrophy 6 to 12). Warm-up sets never count.
+- At most 3 personal records rewarded per session, and one per exercise.
+- The 150 XP daily cap (with partial awards) and the 2 sessions with XP per day.
+- The 4-hour logging window and "a workout cannot start in the future" (D13).
+- That `performed_on` agrees with `started_at` (D13).
+- That only strength users flag warm-up sets (D14).
+- The weekly streak (3 sessions) and the five-day bonus (5 different days), each once per week.
 - Personal-record detection.
 - Level calculation and level-up detection.
 - A workout must have at least 1 set.
@@ -444,21 +502,21 @@ These live in the XP engine, services or middleware, by design (principle 4):
 
 ---
 
-## 8. Open questions for the owner
+## 8. Business questions (answered by the owner)
 
-These business rules are not defined in the project document. The XP engine needs an answer before it is written.
+The complete rules are in `docs/decisions/xp-rules.md`. This table records how each question was answered.
 
-| # | Question | Suggestion |
+| # | Question | Decision |
 |---|---|---|
-| O1 | What exactly is a personal record? | A set whose `weight_kg` is strictly greater than the user's previous maximum for that exercise. |
-| O2 | Is the first time an exercise is ever logged a record? | No. The first time is the baseline. |
-| O3 | What is "a week" for the streak and the weekly chart? | Monday to Sunday (ISO 8601). Appendix B shows the query. |
-| O4 | Do the streak bonus and the record bonuses count toward the 150 XP daily cap? | Yes, all XP counts, for simplicity. |
-| O5 | If the daily cap is already reached, does a workout create an action row with 0 XP? | No. A workout with no XP creates no action, so "sessions with XP" is a count of `workout_completed` rows. |
-| O6 | How is "no future dates" checked across time zones? | The date is the user's local day, so allow up to the server's UTC date plus 1 day. |
-| O7 | How are bodyweight exercises stored? | `weight_kg = 0`. |
-| O8 | Are the proposed `type` names right? | `workout_completed`, `personal_record`, `weekly_streak`. |
-| O9 | Should `modules` hold more than `code` (for example a display name or an enabled flag)? | Not yet. Add a column only when the database itself needs it, not the UI configuration. |
+| O1 | What exactly is a personal record? | A set whose weight is strictly greater than the user's previous maximum for that exercise, or whose reps are strictly greater than the previous best at exactly the same weight. Warm-up sets are ignored. |
+| O2 | Is the first time an exercise is ever logged a record? | No. The first time is the baseline. The same holds for the first time at a given weight (no repetition record). |
+| O3 | What is "a week" for the streak and the weekly chart? | Monday to Sunday (ISO 8601). Appendix A shows the query. Streak: 3 sessions in the week (+40 XP). Five-day bonus: 5 different days (+15 XP). |
+| O4 | Do the streak bonus and the record bonuses count toward the 150 XP daily cap? | Yes, all XP counts. If a workout would go above the cap, only the XP needed to reach it is awarded. |
+| O5 | If the daily cap is already reached, does a workout create an action row with 0 XP? | No. Without XP there is no action, so "sessions with XP" is a count of `workout_completed` rows. |
+| O6 | How is "no future dates" checked across time zones? | Replaced by a 4-hour logging window measured from `started_at` (D13). |
+| O7 | How are bodyweight exercises stored? | `weight_kg = 0` means no added weight. Weighted calisthenics store the real weight. |
+| O8 | Are the proposed `type` names right? | `workout_completed`, `personal_record`, `weekly_streak` and a new one, `weekly_five_days`. |
+| O9 | Should `modules` hold more than `code`? | Not yet. Add a column only when the database itself needs it, not the UI configuration. |
 
 ---
 
@@ -476,14 +534,14 @@ A change to a core table is justified only if **every** module needs the new dat
 
 ### 9.2 What was verified and how
 
-**Executed:** the SQL in Appendix A was run on SQLite 3.45.1 and tested with a script covering constraints, foreign keys, cascades, STRICT typing, index use and the example queries. Results:
+**Executed (v0.3):** the SQL in `001_initial_schema.sql` was run on SQLite 3.45.1 and tested again with a script of 49 checks covering constraints, foreign keys, cascades, STRICT typing, the new columns and table, index use and the example queries of Appendix A. Results:
 
 ```text
-SQLite version: 3.45.1
+SQLite version: 3.45.1 
 
 PASS  SQLite >= 3.37.0
 PASS  foreign_keys pragma is ON
-PASS  valid rows insert OK
+PASS  valid rows insert OK (including a warm-up set and a gym profile)
 PASS  email unique, case-insensitive
 PASS  invalid role rejected
 PASS  action for a module the user has not activated is rejected (composite FK)
@@ -501,22 +559,40 @@ PASS  stats with an unregistered module (typo) is rejected
 PASS  a registered module cannot be deleted while stats use it (RESTRICT)
 PASS  a new module needs only a modules row plus its own rows (no core table change)
 PASS  duplicate module code rejected
+PASS  workout without started_at rejected (NOT NULL)
+PASS  started_at with a wrong format or impossible value rejected (6 cases)
+PASS  started_at as UTC timestamp accepted
+PASS  is_warmup defaults to 0
+PASS  is_warmup = 2 rejected
+PASS  STRICT: is_warmup = 'yes' rejected
+PASS  gym profile: hypertrophy accepted
+PASS  gym profile: second row for the same user rejected
+PASS  gym profile: typo in the focus ('strenght') rejected
+PASS  gym profile: profile for a non-existent user rejected (FK)
+PASS  gym profile: focus can be changed with UPDATE
 PASS  week_start(Mon 2026-10-12) = 2026-10-12
 PASS  week_start(Sun 2026-10-18) = 2026-10-12
 PASS  week_start(Mon 2026-10-19) = 2026-10-19
 PASS  daily XP query returns 26
 PASS  sessions-with-XP query returns 1
-PASS  previous max weight for record check = 70
+PASS  weekly sessions query returns 4
+PASS  weekly distinct training days query returns 3 (sessions and days differ)
+PASS  previous max weight for the record check = 70 (the 100 kg warm-up is ignored)
+PASS  best previous reps at exactly 70 kg = 6
+PASS  no previous sets at 62.5 kg -> NULL (baseline, not a record)
+PASS  integrity query finds nothing when stats and actions agree
 PASS  integrity query detects exactly the drifted row (gym) and ignores consistent rows (books)
 PASS  daily-cap query uses idx_actions_user_module_day
 PASS  history query uses idx_workouts_user_day
 PASS  record-detection lookup uses idx_workout_sets_exercise
 PASS  deleting a workout cascades to its sets
-PASS  deleting a user cascades to stats, actions, workouts and sets
 PASS  AUTOINCREMENT does not reuse deleted workout ids
+PASS  deleting a user cascades to stats, actions, workouts, sets and gym profile
 
-FAILED: 0
+FAILED: 0 of 49
 ```
+
+**Also tested in v0.3:** adding `started_at` with `ALTER TABLE ... ADD COLUMN ... NOT NULL` and no default works on an empty table and fails with "Cannot add a NOT NULL column with default value NULL" when the table already has rows.
 
 **Checked against the SQLite documentation while writing this document:**
 - STRICT tables exist since SQLite 3.37.0 (2021-11-27), and the allowed column types are INT, INTEGER, REAL, TEXT, BLOB and ANY (sqlite.org/stricttables.html).
@@ -573,4 +649,61 @@ The project document plans PostgreSQL after the MVP. From general knowledge (not
 - `COLLATE NOCASE` becomes a `citext` column or a unique index on `lower(email)`.
 - The repository layer isolates the SQL (project document, section 10), so the port is a rewrite of the migrations and not a redesign.
 
---
+---
+
+## Appendix A. Example queries (tested)
+
+All of these ran against the schema in section 9.2. Use parameters (`?` or `:name`), never concatenated text.
+
+**A.1 Monday of the week of a date** (ISO week, Monday to Sunday):
+
+```sql
+SELECT date(:d, '-' || ((CAST(strftime('%w', :d) AS INTEGER) + 6) % 7) || ' days');
+```
+
+**A.2 XP awarded on a day** (daily cap):
+
+```sql
+SELECT COALESCE(SUM(xp_awarded), 0) FROM actions
+WHERE user_id = ? AND module = 'gym' AND occurred_on = ?;
+```
+
+**A.3 Sessions with XP on a day:**
+
+```sql
+SELECT COUNT(*) FROM actions
+WHERE user_id = ? AND module = 'gym' AND type = 'workout_completed' AND occurred_on = ?;
+```
+
+**A.4 Sessions and different training days in a week** (streak and five-day bonus):
+
+```sql
+SELECT COUNT(*) AS sessions, COUNT(DISTINCT occurred_on) AS training_days FROM actions
+WHERE user_id = ? AND module = 'gym' AND type = 'workout_completed'
+  AND occurred_on BETWEEN ? AND ?;   -- Monday and Sunday of the week
+```
+
+**A.5 Record detection** (history before the current workout, warm-up sets ignored):
+
+```sql
+-- Previous maximum weight for an exercise
+SELECT MAX(ws.weight_kg)
+FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+WHERE w.user_id = ? AND ws.exercise_id = ? AND ws.is_warmup = 0 AND w.id <> ?;
+
+-- Previous best reps at exactly the same weight (NULL means: first time at that weight)
+SELECT MAX(ws.reps)
+FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
+WHERE w.user_id = ? AND ws.exercise_id = ? AND ws.is_warmup = 0 AND w.id <> ?
+  AND ws.weight_kg = ?;
+```
+
+**A.6 Integrity check** (rows where `stats.total_xp` differs from the sum of the log):
+
+```sql
+SELECT s.user_id, s.module, s.total_xp, COALESCE(SUM(a.xp_awarded), 0) AS logged_xp
+FROM stats s
+LEFT JOIN actions a ON a.user_id = s.user_id AND a.module = s.module
+GROUP BY s.user_id, s.module
+HAVING s.total_xp <> COALESCE(SUM(a.xp_awarded), 0);
+```

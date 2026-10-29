@@ -8,7 +8,7 @@ The long-term vision is to make Ownform a mobile application that becomes part o
 
 ## Status
 
-**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (authentication, database connection, and XP engine) is next.
+**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (core) is in progress: the XP engine and the PostgreSQL connection with its migration runner are done and tested. Authentication is next.
 
 See the [Roadmap](#roadmap) for the planned development phases.
 
@@ -34,7 +34,7 @@ The following checklist represents the planned scope for version 1.0. Items will
 - [ ] User registration and login with hashed passwords and JWT authentication.
 - [ ] Read-only demo mode with sample data.
 - [ ] Gym module with an exercise catalog, workout registration, sets, and personal-record detection.
-- [ ] XP and level engine with configurable rules and automated tests.
+- [x] XP and level engine with configurable rules and automated tests.
 - [ ] Action log that records every XP award and its source.
 - [ ] Character screen with statistics, progress bars, and recent activity.
 - [ ] Workout history and weekly XP chart.
@@ -53,11 +53,13 @@ The project will introduce technologies incrementally. The table below distingui
 | Code quality | ESLint | Already in the repository |
 | Formatting | Prettier | Already in the repository |
 | Backend framework | Express | Planned |
-| Database | SQLite with `better-sqlite3` | Planned |
+| Database | PostgreSQL 17 | Already in the repository |
+| Database driver | `pg` (node-postgres) | Already in the repository |
+| Local development | Docker Compose | Already in the repository |
 | Input validation | Zod | Planned |
 | Password hashing | bcrypt | Planned |
 | Authentication | JWT | Planned |
-| Testing | `node:test` | Planned |
+| Testing | `node:test` | Already in the repository |
 | Continuous integration | GitHub Actions | Planned |
 | Backend language | TypeScript | Planned for a later phase |
 | Frontend framework | React | Planned for a later phase |
@@ -70,7 +72,7 @@ Ownform will follow a **modular monolith** architecture: one deployable applicat
 
 The XP engine will be pure domain logic. It will calculate XP, levels, personal records, and applicable limits without depending on Express or the database, making it easier to test and maintain.
 
-SQLite will be the initial database, with PostgreSQL as a possible future option.
+PostgreSQL is the database. It runs in a Docker container for local development, and the SQL lives in numbered migration files applied by a small migration runner.
 
 ### High-level architecture
 
@@ -83,7 +85,7 @@ flowchart TD
     D --> E[Services]
 
     E --> F[Repositories]
-    F --> G[(SQLite Database)]
+    F --> G[(PostgreSQL Database)]
 
     E --> H[XP Engine]
     H --> I[XP, Levels, Records]
@@ -93,34 +95,30 @@ See [`docs/decisions/`](docs/decisions/) for architecture decision records expla
 
 ## Repository Structure
 
-The following is the **planned repository structure**. Not every directory or file exists yet.
+Items marked *(planned)* do not exist yet.
 
 ```text
 ownform/
 ├── README.md
 ├── backend/
 │   ├── package.json
+│   ├── docker-compose.yml          # local PostgreSQL
+│   ├── .env.example                # copy to .env (not committed)
 │   ├── src/
-│   │   ├── app.js
-│   │   ├── server.js
-│   │   ├── routes/
-│   │   ├── controllers/
-│   │   ├── services/
-│   │   ├── repositories/
-│   │   ├── modules/
-│   │   └── domain/
-│   │       └── xp/
-│   └── test/
-├── frontend/
-│   ├── index.html
-│   ├── css/
-│   └── js/
+│   │   ├── config/                 # XP rules configuration
+│   │   ├── core/xp-engine/         # pure XP and level logic
+│   │   ├── db/                     # connection, migration runner, migrations/
+│   │   ├── modules/                # auth, character, gym (planned)
+│   │   ├── middlewares/            # (planned)
+│   │   ├── app.js                  # (planned)
+│   │   └── server.js               # (planned)
+│   └── tests/                      # core/, db/ and helpers/
+├── frontend/                       # (planned)
 └── docs/
-    ├── database-design.md
-    └── decisions/
+    └── decisions/                  # architecture decision records, database design, XP rules
 ```
 
-Git does not track empty directories, so some planned folders may not appear in the repository until files are added.
+Git does not track empty directories, so planned folders may not appear in the repository until files are added.
 
 ## Getting Started
 
@@ -128,47 +126,72 @@ Git does not track empty directories, so some planned folders may not appear in 
 
 - [Node.js](https://nodejs.org/) LTS
 - [Git](https://git-scm.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (it runs the PostgreSQL database in a container)
 
 ### Installation
 
 Clone the repository:
 
 ```bash
-git clone <https://github.com/trianajuand/ownform.git>
+git clone https://github.com/trianajuand/ownform.git
 ```
 
-Enter the backend directory:
+Enter the backend directory and install the dependencies:
 
 ```bash
 cd ownform/backend
-```
-
-Install the dependencies:
-
-```bash
 npm install
 ```
 
-Run ESLint:
+Create your local environment file. These are development values for the local container, and `.env` is not committed:
 
 ```bash
-npm run lint
+# macOS / Linux / Git Bash
+cp .env.example .env
+
+# Windows PowerShell
+Copy-Item .env.example .env
 ```
 
-Check code formatting:
+### Database
+
+Start PostgreSQL in Docker (the first run downloads the image), then create the tables:
 
 ```bash
+npm run db:up
+npm run migrate
+```
+
+Other database commands:
+
+| Command | What it does |
+|---|---|
+| `npm run db:down` | Stops the container. The data is kept. |
+| `npm run db:psql` | Opens a PostgreSQL console inside the container. |
+| `npm run db:reset` | Deletes ALL local data, starts a fresh database and applies the migrations. |
+
+### Tests and code quality
+
+```bash
+npm test
+npm run lint
 npm run format:check
 ```
 
-These commands cover the current setup and code-quality checks. **The application server and API have not been implemented yet**, so there is no server to start at this stage.
+The database tests need the container to be running. Each test file works in its own temporary schema, so tests never touch your development data.
+
+**The application server and API have not been implemented yet**, so there is no server to start at this stage.
 
 ## Documentation
 
 Project documentation and technical decisions will be maintained alongside the code.
 
-- [Database Design](docs/decisions/002-database-design.md) — Planned database schema and relationships.
-- [Architecture Decision Records](docs/decisions/001-architecture.md) — Technical decisions, their reasoning, and their consequences.
+- [Database Design](docs/decisions/002-database-design.md) — Database schema, relationships, normalization analysis and tested queries.
+- [XP Rules](docs/decisions/xp-rules.md) — The rules the XP engine implements.
+- Architecture decision records, with their reasoning and consequences:
+  - [001 Modular monolith](docs/decisions/001-architecture.md)
+  - [003 ES modules](docs/decisions/003-es-modules.md)
+  - [004 PostgreSQL with Docker](docs/decisions/004-postgresql.md)
 
 ## Roadmap
 

@@ -91,3 +91,5 @@ Mitigations and implementation guidance
 - Revisit this decision only if actual needs emerge—for example, a module requires independent scaling or deployment, or team and operational requirements change substantially. Any extraction should be justified by measurable benefits and documented in a separate decision record.
 ## Status
 Accepted. The modular monolith is the chosen architecture for the initial Ownform implementation. This decision does not prohibit future architectural changes; it establishes the simplest structure that meets the known requirements while preserving clear internal boundaries.
+
+Amended on 2026-10-28 by [004 PostgreSQL with Docker](004-postgresql.md): the initial database is PostgreSQL, not SQLite. The mentions of SQLite above are kept as they were written when this decision was made. The decision itself (a modular monolith with layers and persistence isolation) is unchanged.

@@ -1,9 +1,10 @@
 # Ownform: Database Design
 
-**Status:** draft v0.3, written for the project owner's review. The owner has answered the business questions O1 to O9 (section 8) and approved the schema changes of v0.3.
+**Status:** draft v0.4, written for the project owner's review. The owner has answered the business questions O1 to O9 (section 8) and approved the schema changes of v0.3. In v0.4 the database moved from SQLite to PostgreSQL (see `004-postgresql.md`).
 **Changes in v0.2:** added the `modules` registry table (D12) after a review question from the owner, and updated D6, the diagram, the dictionary, the normalization analysis and section 9.1. Added sections 9.4 and 9.5.
 **Changes in v0.3:** three additions after the XP rules were decided (`xp-rules.md`): `workouts.started_at` (D13), `workout_sets.is_warmup` (D14) and the `gym_profiles` table (D15). Migration 001 was edited in place because no database had been created from it yet (D10). O1 to O9 are answered (section 8). The references to Appendices A and B, which did not exist, were replaced by a real Appendix A with tested queries. Sections 7 and 9.2 were updated.
-**Date:** 2026-10-22
+**Changes in v0.4:** the schema was rewritten for PostgreSQL (migration 001 was edited in place once more, still before any database existed). The open question of D10 was answered (a `schema_migrations` table) and D16 was added. D1, D4, D8, D9, D10, D13, D14 and D15 were updated, and so were the principle 5 text, the diagram, section 4, sections 9.2 to 9.5 and Appendix A. The checks now run as automated tests against a real PostgreSQL instead of an ad hoc script.
+**Date:** 2026-10-28
 **Scope:** MVP (gym module) plus the seams needed so later modules (Books, Style, Confidence) can be added without redesigning the core.
 **Based on:** the project document (sections 5, 7, 9.7 and 10). Where this design differs from section 9.7, the difference is listed in section 6.
 
@@ -74,7 +75,7 @@ Denormalization is **deliberate** redundancy, accepted for a stated reason. A va
 2. **Dependencies point one way.** Module tables may reference core tables. Core tables never reference module tables. This is the same rule as the architecture (project document, 9.4: modules talk to the core, and the core does not know the modules).
 3. **Growth by rows and migrations.** A new module adds rows to `stats` and `actions`, and new tables of its own through a new migration file. It never changes the core tables.
 4. **The database enforces what it can enforce cheaply and permanently** (keys, types, ranges, references). **Business rules live in the XP engine and services** (caps, streaks, records), because they change and are configured, not hardcoded.
-5. **No hardcoded lists of modules in the schema.** SQLite cannot change a constraint in place (it requires rebuilding the table), so a `CHECK (module IN ('gym'))` would force a painful migration for every new module. Decisions D6 and D12 show how referential integrity replaces it.
+5. **No hardcoded lists of modules in the schema.** A `CHECK (module IN ('gym'))` would have to be dropped and re-created by a migration for every new module, and it would be one more list to keep in sync with the code. Decisions D6 and D12 show how referential integrity replaces it.
 6. **Design only what exists.** We do not create tables for Books, Style or Confidence now. We design the seams (principles 1 to 3) so they fit later.
 
 ---
@@ -97,7 +98,7 @@ erDiagram
         text email UK
         text password_hash
         text role
-        text created_at
+        timestamptz created_at
     }
     MODULES {
         text code PK
@@ -114,8 +115,8 @@ erDiagram
         text type
         integer xp_awarded
         integer reference_id
-        text occurred_on
-        text created_at
+        date occurred_on
+        timestamptz created_at
     }
     EXERCISES {
         integer id PK
@@ -125,11 +126,11 @@ erDiagram
     WORKOUTS {
         integer id PK
         integer user_id FK
-        text performed_on
-        text started_at
+        date performed_on
+        timestamptz started_at
         integer duration_min
         text notes
-        text created_at
+        timestamptz created_at
     }
     WORKOUT_SETS {
         integer id PK
@@ -137,8 +138,8 @@ erDiagram
         integer exercise_id FK
         integer position
         integer reps
-        real weight_kg
-        integer is_warmup
+        float weight_kg
+        boolean is_warmup
     }
     GYM_PROFILES {
         integer user_id PK, FK
@@ -166,7 +167,7 @@ Reading the N:M row: `workout_sets` is not just a link. It carries `reps`, `weig
 
 ## 4. Table dictionary
 
-Types are SQLite STRICT types. Dates are ISO 8601 text.
+Types are PostgreSQL types. Calendar days are `DATE`, timestamps are `TIMESTAMPTZ` (an exact instant, stored in UTC) and primary keys are identity columns (`INTEGER GENERATED ALWAYS AS IDENTITY`).
 
 ### 4.1 `users` (core)
 
@@ -176,12 +177,12 @@ Types are SQLite STRICT types. Dates are ISO 8601 text.
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
-| `id` | INTEGER | no | Primary key |
+| `id` | INTEGER | no | Primary key, identity column |
 | `name` | TEXT | no | 1 to 100 characters |
-| `email` | TEXT | no | Unique, case-insensitive (`COLLATE NOCASE`) |
+| `email` | TEXT | no | Unique, case-insensitive (unique index on `lower(email)`) |
 | `password_hash` | TEXT | no | bcrypt hash, never the password |
 | `role` | TEXT | no | `'user'` or `'demo'`. Default `'user'` |
-| `created_at` | TEXT | no | UTC timestamp, default now |
+| `created_at` | TIMESTAMPTZ | no | Default `now()` |
 
 ### 4.2 `stats` (core)
 
@@ -205,14 +206,14 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
-| `id` | INTEGER | no | Primary key |
+| `id` | INTEGER | no | Primary key, identity column |
 | `user_id` | INTEGER | no | Part of the composite FK to `stats` |
 | `module` | TEXT | no | Part of the composite FK to `stats` |
 | `type` | TEXT | no | Kind of event, scoped by module. Proposed gym types: `workout_completed`, `personal_record`, `weekly_streak` |
 | `xp_awarded` | INTEGER | no | `>= 0` |
 | `reference_id` | INTEGER | yes | Row in a module table, chosen by `(module, type)`. No FK (D4) |
-| `occurred_on` | TEXT | no | Calendar day of the activity (`YYYY-MM-DD`), validated as a real date (D5) |
-| `created_at` | TEXT | no | UTC timestamp of insertion |
+| `occurred_on` | DATE | no | Calendar day of the activity (D5) |
+| `created_at` | TIMESTAMPTZ | no | Moment of insertion, default `now()` |
 
 **Foreign key:** `(user_id, module) → stats(user_id, module)`, `ON DELETE CASCADE`.
 **Index:** `idx_actions_user_module_day (user_id, module, occurred_on)`. It serves the daily cap, the "2 sessions per day" rule and the weekly chart.
@@ -225,8 +226,8 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
-| `id` | INTEGER | no | Primary key |
-| `name` | TEXT | no | Unique, case-insensitive |
+| `id` | INTEGER | no | Primary key, identity column |
+| `name` | TEXT | no | Unique, case-insensitive (unique index on `lower(name)`) |
 | `muscle_group` | TEXT | no | Plain text. It has no attributes of its own, so a separate table would add nothing yet |
 
 ### 4.5 `workouts` (gym)
@@ -237,13 +238,13 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
-| `id` | INTEGER | no | Primary key, `AUTOINCREMENT` (ids never reused, see D4) |
+| `id` | INTEGER | no | Primary key, identity column (ids are never reused, see D4) |
 | `user_id` | INTEGER | no | FK to `users`, `ON DELETE CASCADE` |
-| `performed_on` | TEXT | no | Calendar day of the session (the user's local day), validated as a real date |
-| `started_at` | TEXT | no | UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) of the moment the workout started, sent by the client. The 4-hour logging window is measured from it (D13) |
+| `performed_on` | DATE | no | Calendar day of the session (the user's local day) |
+| `started_at` | TIMESTAMPTZ | no | The exact moment the workout started, sent by the client. The 4-hour logging window is measured from it (D13) |
 | `duration_min` | INTEGER | no | 1 to 600 (loose safety net) |
 | `notes` | TEXT | yes | Free text |
-| `created_at` | TEXT | no | UTC timestamp, default now |
+| `created_at` | TIMESTAMPTZ | no | Default `now()` |
 
 **Index:** `idx_workouts_user_day (user_id, performed_on)`, for the paginated history.
 
@@ -255,13 +256,13 @@ The level is **not** stored (see D2). The stat name shown in the UI (Strength fo
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
-| `id` | INTEGER | no | Primary key, `AUTOINCREMENT` |
+| `id` | INTEGER | no | Primary key, identity column |
 | `workout_id` | INTEGER | no | FK to `workouts`, `ON DELETE CASCADE` |
 | `exercise_id` | INTEGER | no | FK to `exercises`, `ON DELETE RESTRICT` |
 | `position` | INTEGER | no | `>= 1`. Order of the set in the workout. Unique with `workout_id` |
 | `reps` | INTEGER | no | 1 to 500 (loose safety net) |
-| `weight_kg` | REAL | no | 0 to 1000. Bodyweight exercises store 0 |
-| `is_warmup` | INTEGER | no | `0` or `1`, default 0. `1` marks a warm-up set (strength focus only), which earns no XP and is ignored by record detection (D14) |
+| `weight_kg` | DOUBLE PRECISION | no | 0 to 1000. Bodyweight exercises store 0. Not `NUMERIC`, see D16 |
+| `is_warmup` | BOOLEAN | no | Default `false`. `true` marks a warm-up set (strength focus only), which earns no XP and is ignored by record detection (D14) |
 
 **Indexes:** the `UNIQUE (workout_id, position)` constraint creates one on `workout_id`. `idx_workout_sets_exercise (exercise_id)` serves personal-record detection.
 
@@ -372,7 +373,7 @@ Each decision states the context, the options and the recommendation. All are re
 ### D1. Keys: integer surrogate keys, except `stats`
 
 - **Context:** every table needs a stable way to be referenced.
-- **Decision:** single-column `INTEGER PRIMARY KEY` (SQLite's fast rowid alias) for `users`, `exercises`, `workouts`, `workout_sets` and `actions`. `email` and `exercise name` get `UNIQUE`. `stats` uses the natural composite key `(user_id, module)`.
+- **Decision:** single-column identity primary keys (`INTEGER GENERATED ALWAYS AS IDENTITY`) for `users`, `exercises`, `workouts`, `workout_sets` and `actions`. `email` and `exercise name` get a unique index on `lower(...)`, so they are unique ignoring upper and lower case. `stats` uses the natural composite key `(user_id, module)`.
 - **Why `stats` differs:** nothing else references a stats row by id, and a composite key makes the "one stat per user and module" rule structural instead of an extra `UNIQUE`.
 - **Deviation from 9.7:** the `stats.id` column is removed.
 
@@ -398,7 +399,7 @@ Each decision states the context, the options and the recommendation. All are re
 - **Context:** the same column must point to different tables as modules arrive (a workout today, a book later), and for gym events it points to a workout or a set depending on `type`. A foreign key can only point to one table.
 - **Options:** (A) a nullable generic `reference_id` with a documented convention; (B) one link table per module that connects actions to that module's rows, which gives real integrity but adds tables for every module; (C) a nullable FK column per module table inside `actions`, which makes the core depend on modules and breaks principle 2.
 - **Decision:** A. This pattern is known in the literature as a "polymorphic association" (Karwin, *SQL Antipatterns*) and it has a real cost: the database cannot detect a dangling reference.
-- **Mitigations:** the service validates the reference inside the transaction. The MVP has no delete endpoints, and `workouts` and `workout_sets` use `AUTOINCREMENT`, so ids are never reused and a stale reference can never silently point to an unrelated row. `actions` is append-only.
+- **Mitigations:** the service validates the reference inside the transaction. The MVP has no delete endpoints, and `workouts` and `workout_sets` use identity columns, whose sequences only move forward, so ids are never reused and a stale reference can never silently point to an unrelated row. `actions` is append-only.
 - **Proposed convention:** `workout_completed` → `workouts.id`; `personal_record` → `workout_sets.id` (the set that broke the record; the exercise is reachable through it); `weekly_streak` → `NULL`.
 
 ### D5. Add `actions.occurred_on`
@@ -409,7 +410,7 @@ Each decision states the context, the options and the recommendation. All are re
 
 ### D6. `actions` references `stats` with a composite foreign key
 
-- **Context:** the log needs a valid `module`, but a hardcoded `CHECK (module IN (...))` cannot be changed in SQLite without rebuilding the table.
+- **Context:** the log needs a valid `module`, but a hardcoded `CHECK (module IN (...))` would have to be dropped and re-created by a migration for every new module, and it would be one more list to keep in sync with the code.
 - **Decision:** `FOREIGN KEY (user_id, module) REFERENCES stats (user_id, module)`. An action can exist only for a module that is **active for that user**, and the list of modules lives in data instead of in the schema (the module name itself is validated one level up, see D12).
 - **Consequences:** it fits the architecture (actions → stats → users, all core tables), the module is activated by inserting a `stats` row, and deleting a user cascades through `stats` to `actions`.
 - **Deviation from 9.7:** `actions.user_id` no longer references `users` directly. It reaches `users` through `stats`.
@@ -423,20 +424,20 @@ Each decision states the context, the options and the recommendation. All are re
 
 ### D8. Dates and times
 
-- **Decision:** ISO 8601 `TEXT`, because SQLite has no date type. Calendar days (`performed_on`, `occurred_on`) are `YYYY-MM-DD` and are checked to be real dates with `CHECK (date(col) IS col)`. Timestamps (`created_at`, `started_at`) are UTC `YYYY-MM-DDTHH:MM:SSZ`. `started_at` is validated with `CHECK (strftime(...) IS col)`.
+- **Decision:** calendar days (`performed_on`, `occurred_on`) are `DATE`, and PostgreSQL itself rejects impossible days such as 2026-02-30. Timestamps (`created_at`, `started_at`) are `TIMESTAMPTZ`, an exact instant stored in UTC. The Node driver returns `DATE` as a JavaScript `Date` at local midnight, which can shift the day, so the connection module returns it as `'YYYY-MM-DD'` text instead (D16).
 - **Meaning:** a calendar day is the user's **local** day as chosen in the form, not the server's UTC day. The rule about future or old dates is now a 4-hour logging window measured from `started_at` (D13), which replaced the date-based O6 rule.
 
 ### D9. Type strictness, foreign keys and constraints
 
-- **STRICT tables:** every table is declared `STRICT`, so a text value cannot be stored in an integer column. This needs SQLite 3.37.0 or later.
-- **Foreign keys:** SQLite does not enforce them unless each connection runs `PRAGMA foreign_keys = ON`. The connection module must do it explicitly, even if a library enables it by default, because the SQLite documentation advises not assuming the default. It cannot be set inside a transaction, so it is not part of the migration file.
+- **Typing:** PostgreSQL is strictly typed, so a text value cannot be stored in an integer column (error 22P02). No special table option is needed.
+- **Foreign keys:** PostgreSQL always enforces them. There is no setting to enable, so the connection module has nothing to configure (with SQLite it had to run `PRAGMA foreign_keys = ON` on every connection).
 - **CHECK constraints** (ranges, formats) are a **loose safety net** below the API validation (zod). The API enforces the stricter, tunable limits (reps, weight, duration), so tuning them never needs a migration.
 
 ### D10. Numbered migrations from day one
 
 - **Context:** the project document lists "esquema SQL, migraciones, seed" under `db/`. Once real data exists, an existing `CREATE TABLE` must not be edited.
-- **Decision:** the initial schema is `backend/src/db/migrations/001_initial_schema.sql` (instead of a separate `schema.sql`), so there is one source of truth. Later modules add `002_...`, `003_...`. Applied migrations are immutable. How applied versions are tracked (`PRAGMA user_version` or a `schema_migrations` table) is decided in Phase 1 with the migration runner.
-- **Exception in v0.3:** migration 001 was edited in place to add D13 to D15, because no database had been created from it yet (no migration runner, no data, nothing deployed). From the first database created with it, 001 is immutable and every change goes in a new file. This is why the edit was possible: adding a `NOT NULL` column without a default by `ALTER TABLE` works on an empty table and fails once the table has rows (tested on SQLite 3.45.1).
+- **Decision:** the initial schema is `backend/src/db/migrations/001_initial_schema.sql` (instead of a separate `schema.sql`), so there is one source of truth. Later modules add `002_...`, `003_...`. Applied migrations are immutable. Applied files are tracked in a `schema_migrations` table (`filename`, `applied_at`) that the migration runner (`src/db/migrate.js`) creates. It was chosen over a single version number because it records which file ran and when. Each file runs inside its own transaction, which PostgreSQL supports for schema changes, so a failing file changes nothing.
+- **Exceptions:** migration 001 was edited in place twice, always before any database had been created from it (no data, nothing deployed): in v0.3 to add D13 to D15, and in v0.4 to rewrite it for PostgreSQL (D16). From the first database created with it, 001 is immutable and every change goes in a new file.
 - **Seeds** (exercise catalog, demo data) are separate from migrations.
 
 ### D11. Delete behavior
@@ -461,7 +462,7 @@ The MVP exposes no delete endpoints. These rules protect the data once they exis
 ### D13. Add `workouts.started_at` (v0.3)
 
 - **Context:** the owner wants workouts logged in real time (web first, mobile app later) and XP only if the workout is saved within 4 hours after it started (`xp-rules.md`, section 4). The schema stored only a calendar day, which cannot measure hours.
-- **Decision:** a `NOT NULL` UTC timestamp column `started_at`, sent by the client when the user starts logging. The end time is not stored: it is `started_at` plus `duration_min` (this proposal is still open in `xp-rules.md`, section 7).
+- **Decision:** a `NOT NULL` `TIMESTAMPTZ` column `started_at` (an exact instant), sent by the client when the user starts logging. The end time is not stored: it is `started_at` plus `duration_min` (this proposal is still open in `xp-rules.md`, section 7).
 - **Why `performed_on` stays:** streaks, weeks and the daily cap use the user's **local** calendar day. The time zone is not stored, so the local day cannot be derived from the UTC timestamp. Keeping both is not a normalization problem (5.3). The service checks that they agree: `performed_on` must be within one day of the UTC date of `started_at`.
 - **What the database does not do:** it does not check the 4-hour window or that the start is not in the future. Both depend on the server clock and on a configured value, so they live in the service. The value comes from the client, so it can be faked. The owner accepts that: the limits guide the user and are not a security barrier.
 - **Replaces:** the date-based rule of O6.
@@ -469,7 +470,7 @@ The MVP exposes no delete endpoints. These rules protect the data once they exis
 ### D14. Add `workout_sets.is_warmup` (v0.3)
 
 - **Context:** with the strength focus, the user can log warm-up sets that earn no XP and must not count for records.
-- **Decision:** `is_warmup INTEGER NOT NULL DEFAULT 0 CHECK (is_warmup IN (0, 1))`. STRICT tables have no boolean type, so 0 and 1 is the convention. Set counting and record detection filter `is_warmup = 0` (Appendix A).
+- **Decision:** `is_warmup BOOLEAN NOT NULL DEFAULT false`. The driver maps it to a JavaScript boolean, which is what the XP engine already expects (`isWarmup`). Set counting and record detection filter `NOT is_warmup` (Appendix A).
 - **Rejected:** a separate table for warm-up sets. It would repeat the structure of `workout_sets` for one flag.
 - **Not enforced by the database:** that only strength users flag warm-up sets. The service does it.
 
@@ -478,8 +479,19 @@ The MVP exposes no delete endpoints. These rules protect the data once they exis
 - **Context:** the user chooses strength or hypertrophy at the start and can change it later. The focus decides which reps make a set valid.
 - **Options:** (A) a column in `users`, which breaks principle 2 because a core table would hold gym data; (B) a gym table; (C) a column in `stats`, which is also core.
 - **Decision:** B. `gym_profiles (user_id PK, FK to users, ON DELETE CASCADE; training_focus TEXT NOT NULL CHECK IN ('strength', 'hypertrophy'))`. The row is created at registration.
-- **Why a list in the CHECK, despite principle 5:** principle 5 warns against hardcoded lists of modules because modules are added often. The focus is a gym-internal choice with two values that the XP configuration also names, and a typo would silently break the rep-range lookup. Adding a third focus would mean rebuilding this one small table, which is accepted.
+- **Why a list in the CHECK, despite principle 5:** principle 5 warns against hardcoded lists of modules because modules are added often. The focus is a gym-internal choice with two values that the XP configuration also names, and a typo would silently break the rep-range lookup. Adding a third focus would mean one migration that drops and re-creates this CHECK constraint, which is accepted.
 - **Consequence:** changing the focus affects only future workouts. Past XP in `actions` is not recalculated.
+
+### D16. PostgreSQL instead of SQLite (v0.4)
+
+- **Context:** the first versions targeted SQLite and planned PostgreSQL for later. The owner decided to move before any repository code existed. The two Node drivers differ in a way that spreads: the SQLite one is synchronous, the PostgreSQL one is asynchronous (`async` and `await`), so the later the change, the more repositories, services and tests have to be rewritten. Development and production also use the same engine, and a hosted PostgreSQL does not depend on a file that some hosting services erase when they restart. The full reasoning and the alternatives are in `004-postgresql.md`.
+- **Decision:** the schema targets PostgreSQL 14 or later, and the project runs 17 in Docker. Keys, composite keys, `CASCADE` and `RESTRICT` rules, `UNIQUE`, range checks and indexes did not change. Section 9.5 lists what did.
+- **Driver details that shaped the schema** (all covered by tests):
+  - `DATE` comes back from the `pg` driver as a `Date` at local midnight, which can shift the day. The connection module registers a parser so `DATE` columns arrive as `'YYYY-MM-DD'` text, the format the XP engine uses.
+  - `weight_kg` is `DOUBLE PRECISION`, not `NUMERIC`: the driver returns `NUMERIC` as text, so `set.weight > maxWeight` would compare text. `DOUBLE PRECISION` returns a JavaScript number (the same 64-bit value SQLite's `REAL` held), so "exactly the same weight" comparisons keep working. The trade-off is binary floating point, which stores a value like 72.3 approximately, but the same value goes in and comes out.
+  - `COUNT(*)` and `SUM(...)` return `bigint`, which the driver delivers as text. Queries cast them with `::int`.
+  - Case-insensitive uniqueness uses a unique index on `lower(column)` instead of the `citext` extension. It needs no extension, so the migration is portable and each test schema is self-contained. Queries must compare `lower(email) = lower($1)`.
+- **Consequence:** the repositories use `async` and `await`, and parameters are written `$1`, `$2` (not `?`).
 
 ---
 
@@ -534,76 +546,26 @@ A change to a core table is justified only if **every** module needs the new dat
 
 ### 9.2 What was verified and how
 
-**Executed (v0.3):** the SQL in `001_initial_schema.sql` was run on SQLite 3.45.1 and tested again with a script of 49 checks covering constraints, foreign keys, cascades, STRICT typing, the new columns and table, index use and the example queries of Appendix A. Results:
+**Executed (v0.4):** migration 001 was applied to a real PostgreSQL by the project's own migration runner, and the checks now live in the repository as automated tests, so anyone can run them again:
 
-```text
-SQLite version: 3.45.1 
+- `backend/tests/db/schema.test.js`: 46 tests. Constraints, foreign keys, delete rules, identity ids, the exact-weight comparison, the example queries of Appendix A and index use.
+- `backend/tests/db/migrate.test.js`: 6 tests. Order, applying each file once, rollback of a failing file, ignored files, and the real migrations folder.
+- `backend/tests/db/connection.test.js`: 5 tests. Argument checks, a real connection, the server version, `DATE` returned as text, and foreign keys enforced.
 
-PASS  SQLite >= 3.37.0
-PASS  foreign_keys pragma is ON
-PASS  valid rows insert OK (including a warm-up set and a gym profile)
-PASS  email unique, case-insensitive
-PASS  invalid role rejected
-PASS  action for a module the user has not activated is rejected (composite FK)
-PASS  impossible date 2026-02-30 rejected
-PASS  wrong date format rejected
-PASS  workout for a non-existent user rejected (FK)
-PASS  duplicate (workout_id, position) rejected
-PASS  reps = 0 rejected
-PASS  negative weight rejected
-PASS  negative xp_awarded rejected
-PASS  STRICT: text in INTEGER column rejected
-PASS  deleting an exercise that is in use is blocked (RESTRICT)
-PASS  gym module is registered by the migration
-PASS  stats with an unregistered module (typo) is rejected
-PASS  a registered module cannot be deleted while stats use it (RESTRICT)
-PASS  a new module needs only a modules row plus its own rows (no core table change)
-PASS  duplicate module code rejected
-PASS  workout without started_at rejected (NOT NULL)
-PASS  started_at with a wrong format or impossible value rejected (6 cases)
-PASS  started_at as UTC timestamp accepted
-PASS  is_warmup defaults to 0
-PASS  is_warmup = 2 rejected
-PASS  STRICT: is_warmup = 'yes' rejected
-PASS  gym profile: hypertrophy accepted
-PASS  gym profile: second row for the same user rejected
-PASS  gym profile: typo in the focus ('strenght') rejected
-PASS  gym profile: profile for a non-existent user rejected (FK)
-PASS  gym profile: focus can be changed with UPDATE
-PASS  week_start(Mon 2026-10-12) = 2026-10-12
-PASS  week_start(Sun 2026-10-18) = 2026-10-12
-PASS  week_start(Mon 2026-10-19) = 2026-10-19
-PASS  daily XP query returns 26
-PASS  sessions-with-XP query returns 1
-PASS  weekly sessions query returns 4
-PASS  weekly distinct training days query returns 3 (sessions and days differ)
-PASS  previous max weight for the record check = 70 (the 100 kg warm-up is ignored)
-PASS  best previous reps at exactly 70 kg = 6
-PASS  no previous sets at 62.5 kg -> NULL (baseline, not a record)
-PASS  integrity query finds nothing when stats and actions agree
-PASS  integrity query detects exactly the drifted row (gym) and ignores consistent rows (books)
-PASS  daily-cap query uses idx_actions_user_module_day
-PASS  history query uses idx_workouts_user_day
-PASS  record-detection lookup uses idx_workout_sets_exercise
-PASS  deleting a workout cascades to its sets
-PASS  AUTOINCREMENT does not reuse deleted workout ids
-PASS  deleting a user cascades to stats, actions, workouts, sets and gym profile
+Each test file builds its own temporary schema (`CREATE SCHEMA test_<random>`), applies the migrations there and drops it at the end. Files can therefore run at the same time without touching each other or the development data.
 
-FAILED: 0 of 49
-```
+**Results (run by the author on PostgreSQL 16.15):** 57 tests, 57 pass, 0 fail. Three consecutive runs gave the same result, no test schema was left behind, and `npm run migrate` applied 001 the first time and reported nothing to do the second time.
 
-**Also tested in v0.3:** adding `started_at` with `ALTER TABLE ... ADD COLUMN ... NOT NULL` and no default works on an empty table and fails with "Cannot add a NOT NULL column with default value NULL" when the table already has rows.
+**Mutation check:** the migration was broken on purpose in five ways (no role check, a wrong `UNIQUE`, `NUMERIC` instead of `DOUBLE PRECISION`, no `CASCADE` from sets to workouts, a case-sensitive email index). Each one made at least one test fail, and the original migration was restored afterwards.
 
-**Checked against the SQLite documentation while writing this document:**
-- STRICT tables exist since SQLite 3.37.0 (2021-11-27), and the allowed column types are INT, INTEGER, REAL, TEXT, BLOB and ANY (sqlite.org/stricttables.html).
-- Foreign keys are disabled by default and must be enabled for each connection, and the documentation advises not assuming the default (sqlite.org/foreignkeys.html). The setting cannot be changed in the middle of a transaction.
+**Not verified yet:** PostgreSQL 17, the version in the Docker Compose file. The author's environment had no Docker, so the first `npm test` run against the container is that verification.
 
-**Standard material I did not re-check live, so please verify it yourself:**
+**Index tests:** with tiny tables PostgreSQL prefers reading the whole table, so those tests switch sequential scans off inside a transaction (`SET LOCAL enable_seqscan = off`). They prove that each index **can** serve its query, not that the planner will choose it with real data volumes.
+
+**Standard material not re-checked live, so please verify it yourself:**
 - The normal form definitions in section 1.3 (references below).
-- A `CHECK` constraint passes when its expression evaluates to NULL (sqlite.org/lang_createtable.html). This is why the date checks use `IS` instead of `=`.
-- SQLite's `ALTER TABLE` cannot change or drop constraints, so a table rebuild is needed (sqlite.org/lang_altertable.html).
-- `AUTOINCREMENT` semantics and cost (sqlite.org/autoinc.html).
-- The SQLite version bundled with the library chosen in Phase 1. Run `SELECT sqlite_version();` and confirm it is at least 3.37.0.
+- A `CHECK` constraint passes when its expression evaluates to NULL, which is why the columns that need a value are also `NOT NULL`.
+- A sequence does not roll back with a transaction, so a rolled-back insert leaves a gap in the ids. Gaps are harmless here.
 
 **What the tests do not cover:** the business rules (they belong to the XP engine and its own tests) and performance with large data volumes.
 
@@ -614,7 +576,8 @@ FAILED: 0 of 49
 - C. J. Date, *An Introduction to Database Systems*.
 - A. Silberschatz, H. Korth, S. Sudarshan, *Database System Concepts*.
 - B. Karwin, *SQL Antipatterns* (polymorphic associations).
-- SQLite documentation: sqlite.org/stricttables.html, sqlite.org/foreignkeys.html, sqlite.org/lang_createtable.html, sqlite.org/autoinc.html.
+- PostgreSQL documentation: postgresql.org/docs/current/ddl-constraints.html, postgresql.org/docs/current/datatype-datetime.html, postgresql.org/docs/current/sql-createtable.html (identity columns).
+- node-postgres documentation: node-postgres.com.
 
 ### 9.4 Thought experiment: do the seams hold?
 
@@ -633,77 +596,88 @@ These are illustrative sketches to test the design against the modules planned i
 - New indexes.
 
 **Changes that need a deliberate migration:**
-- Changing or removing a constraint. SQLite requires rebuilding the table, which is why the CHECKs are loose.
+- Changing or removing a constraint. PostgreSQL can do it (`ALTER TABLE ... DROP CONSTRAINT`), but it needs a migration, and adding a stricter constraint fails if existing rows break it. That is why the CHECKs are loose.
 - A module that feeds more than one stat. The key of `stats` is `(user_id, module)`, which assumes one stat per module, as in the project document (5.1).
 - Real integrity for `actions.reference_id` (D4, option B).
 - Negative XP or correction entries (`xp_awarded >= 0` today).
-- Moving to PostgreSQL (9.5).
 
-### 9.5 Portability to PostgreSQL
+### 9.5 What changed when moving from SQLite to PostgreSQL
 
-The project document plans PostgreSQL after the MVP. From general knowledge (not tested here, since this document was only executed on SQLite):
-- Keys, foreign keys, composite foreign keys, `CASCADE` and `RESTRICT` rules, `UNIQUE` and most `CHECK` constraints port unchanged.
-- `INTEGER PRIMARY KEY` and `AUTOINCREMENT` become identity columns.
-- ISO text dates become `DATE` and `TIMESTAMPTZ`, which makes the `date(col) IS col` checks unnecessary, and the `strftime` defaults become `now()`.
-- `STRICT` is unnecessary, because PostgreSQL is strictly typed.
-- `COLLATE NOCASE` becomes a `citext` column or a unique index on `lower(email)`.
-- The repository layer isolates the SQL (project document, section 10), so the port is a rewrite of the migrations and not a redesign.
+Keys, foreign keys (including the composite one), `CASCADE` and `RESTRICT` rules, `UNIQUE` constraints, range `CHECK`s and indexes were kept as they were. The rest:
+
+| In SQLite (v0.3) | In PostgreSQL (v0.4) |
+|---|---|
+| `INTEGER PRIMARY KEY`, `AUTOINCREMENT` | `INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY` |
+| Day as `TEXT` plus `CHECK (date(col) IS col)` | `DATE` (the type rejects impossible days) |
+| Timestamp as `TEXT` plus a `strftime` check | `TIMESTAMPTZ` |
+| Default `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` | Default `now()` |
+| `STRICT` tables | Not needed, PostgreSQL is strictly typed |
+| `COLLATE NOCASE` | Unique index on `lower(col)` |
+| `REAL` | `DOUBLE PRECISION` |
+| `is_warmup INTEGER` with `CHECK (... IN (0, 1))` | `BOOLEAN` |
+| `PRAGMA foreign_keys = ON` on every connection | Nothing, always enforced |
+| `?` placeholders, synchronous driver | `$1`, `$2` placeholders, asynchronous driver |
+| Monday of the week with `date(:d, '-N days')` | `date_trunc('week', ...)` |
+
+The repository layer isolates the SQL (project document, section 10), so the move was a rewrite of the migration and of the queries, not a redesign.
 
 ---
 
 ## Appendix A. Example queries (tested)
 
-All of these ran against the schema in section 9.2. Use parameters (`?` or `:name`), never concatenated text.
+All of these run as automated tests in `backend/tests/db/schema.test.js`. Use parameters (`$1`, `$2`, ...), never concatenated text. `COUNT` and `SUM` are cast with `::int` because the driver returns `bigint` as text.
 
 **A.1 Monday of the week of a date** (ISO week, Monday to Sunday):
 
 ```sql
-SELECT date(:d, '-' || ((CAST(strftime('%w', :d) AS INTEGER) + 6) % 7) || ' days');
+SELECT date_trunc('week', $1::timestamp)::date AS monday;
 ```
 
 **A.2 XP awarded on a day** (daily cap):
 
 ```sql
-SELECT COALESCE(SUM(xp_awarded), 0) FROM actions
-WHERE user_id = ? AND module = 'gym' AND occurred_on = ?;
+SELECT COALESCE(SUM(xp_awarded), 0)::int AS xp FROM actions
+WHERE user_id = $1 AND module = 'gym' AND occurred_on = $2;
 ```
 
 **A.3 Sessions with XP on a day:**
 
 ```sql
-SELECT COUNT(*) FROM actions
-WHERE user_id = ? AND module = 'gym' AND type = 'workout_completed' AND occurred_on = ?;
+SELECT COUNT(*)::int AS sessions FROM actions
+WHERE user_id = $1 AND module = 'gym' AND type = 'workout_completed' AND occurred_on = $2;
 ```
 
-**A.4 Sessions and different training days in a week** (streak and five-day bonus):
+**A.4 Sessions and the list of different training days in a week** (streak and five-day bonus). The XP engine needs the **list** of days, so the query returns it as an array of `'YYYY-MM-DD'` text:
 
 ```sql
-SELECT COUNT(*) AS sessions, COUNT(DISTINCT occurred_on) AS training_days FROM actions
-WHERE user_id = ? AND module = 'gym' AND type = 'workout_completed'
-  AND occurred_on BETWEEN ? AND ?;   -- Monday and Sunday of the week
+SELECT COUNT(*)::int AS sessions,
+       COALESCE(array_agg(DISTINCT occurred_on::text ORDER BY occurred_on::text), '{}') AS training_days
+FROM actions
+WHERE user_id = $1 AND module = 'gym' AND type = 'workout_completed'
+  AND occurred_on BETWEEN $2 AND $3;   -- Monday and Sunday of the week
 ```
 
 **A.5 Record detection** (history before the current workout, warm-up sets ignored):
 
 ```sql
--- Previous maximum weight for an exercise
-SELECT MAX(ws.weight_kg)
+-- Previous maximum weight for an exercise (NULL means: first time, only a baseline)
+SELECT MAX(ws.weight_kg) AS max_weight
 FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
-WHERE w.user_id = ? AND ws.exercise_id = ? AND ws.is_warmup = 0 AND w.id <> ?;
+WHERE w.user_id = $1 AND ws.exercise_id = $2 AND NOT ws.is_warmup AND w.id <> $3;
 
 -- Previous best reps at exactly the same weight (NULL means: first time at that weight)
-SELECT MAX(ws.reps)
+SELECT MAX(ws.reps) AS best_reps
 FROM workout_sets ws JOIN workouts w ON w.id = ws.workout_id
-WHERE w.user_id = ? AND ws.exercise_id = ? AND ws.is_warmup = 0 AND w.id <> ?
-  AND ws.weight_kg = ?;
+WHERE w.user_id = $1 AND ws.exercise_id = $2 AND NOT ws.is_warmup AND w.id <> $3
+  AND ws.weight_kg = $4;
 ```
 
 **A.6 Integrity check** (rows where `stats.total_xp` differs from the sum of the log):
 
 ```sql
-SELECT s.user_id, s.module, s.total_xp, COALESCE(SUM(a.xp_awarded), 0) AS logged_xp
+SELECT s.user_id, s.module, s.total_xp, COALESCE(SUM(a.xp_awarded), 0)::int AS logged_xp
 FROM stats s
 LEFT JOIN actions a ON a.user_id = s.user_id AND a.module = s.module
-GROUP BY s.user_id, s.module
+GROUP BY s.user_id, s.module, s.total_xp
 HAVING s.total_xp <> COALESCE(SUM(a.xp_awarded), 0);
 ```

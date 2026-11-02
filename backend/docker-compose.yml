@@ -1,0 +1,25 @@
+# Local PostgreSQL for development. Start it with "npm run db:up".
+# The values come from backend/.env (copy .env.example to .env first).
+name: ownform
+
+services:
+  db:
+    image: postgres:17
+    container_name: ownform-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env first}
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env first}
+    ports:
+      # Only this computer can reach the database (127.0.0.1), not other devices on the network.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - ownform-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ownform-db-data:

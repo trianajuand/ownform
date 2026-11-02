@@ -143,7 +143,7 @@ cd ownform/backend
 npm install
 ```
 
-Create your local environment file. These are development values for the local container, and `.env` is not committed:
+Create your local environment file, then open `.env` and replace `CHANGE_ME` with a password of your choice (in both places where it appears). `.env` is not committed:
 
 ```bash
 # macOS / Linux / Git Bash
@@ -152,6 +152,8 @@ cp .env.example .env
 # Windows PowerShell
 Copy-Item .env.example .env
 ```
+
+The password must be the same in `POSTGRES_PASSWORD` and in `DATABASE_URL`. Use only letters, numbers and `_`, because characters such as `@`, `:` or `/` break the URL.
 
 ### Database
 

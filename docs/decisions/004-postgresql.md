@@ -19,7 +19,7 @@ The data is relational: users own workouts, workouts contain sets, sets point to
 Use PostgreSQL as the database for Ownform, and run it in Docker for local development. The implementation follows these rules:
 
 1. **Version.** PostgreSQL 17, through the official `postgres:17` image. The major version is pinned in `backend/docker-compose.yml`, so upgrading is a deliberate change. The schema needs PostgreSQL 14 or later.
-2. **Local database.** `backend/docker-compose.yml` defines one service, `db`, with a named volume so the data survives restarts and a health check so tools can wait until the database is ready. Credentials come from `backend/.env`, which is not committed. `backend/.env.example` is committed with development-only values.
+2. **Local database.** `backend/docker-compose.yml` defines one service, `db`, with a named volume so the data survives restarts and a health check so tools can wait until the database is ready. Credentials come from `backend/.env`, which is not committed. `backend/.env.example` is committed as a template with a placeholder password (`CHANGE_ME`) that each developer replaces.
 3. **Driver.** `pg` (node-postgres) with a connection pool, created in `backend/src/db/connection.js` from the `DATABASE_URL` environment variable. Code that touches the database is asynchronous (`async` and `await`), and SQL parameters are written `$1`, `$2`.
 4. **Driver settings that matter.** `DATE` columns are returned as `'YYYY-MM-DD'` text, because the driver's default (a `Date` at local midnight) can shift the day. Queries cast `COUNT` and `SUM` to `::int`, because the driver returns `bigint` as text. Weights are `DOUBLE PRECISION`, because `NUMERIC` would also come back as text. The reasons are in D16 of the database design.
 5. **Migrations.** Numbered SQL files in `backend/src/db/migrations/`, applied by `backend/src/db/migrate.js` (run with `npm run migrate`). Applied files are recorded in a `schema_migrations` table, and each file runs inside its own transaction. This answers the open question in decision D10 of the database design. Migration 001 was rewritten for PostgreSQL before any database existed, so it is still the first and only file.
@@ -95,10 +95,10 @@ Use PostgreSQL as the database for Ownform, and run it in Docker for local devel
 - Migrations are transactional: a failing file changes nothing.
 
 **Negative and risks**
-- The tests fail with a clear message if the container is not running, so `npm run db:up` becomes part of the routine.
+- The database tests fail with a connection error if the container is not running, so `npm run db:up` becomes part of the routine.
 - `npm run db:reset` deletes all local data. It is meant for development only.
 - The schema was tested on PostgreSQL 16 during the rewrite, and the container uses 17. The first test run against the container is the verification for 17.
-- The development password is committed in `.env.example`. It is a placeholder for a local container and must never be reused in a deployed environment.
+- Each developer chooses the database password in their own `.env`. The container only accepts connections from the local computer (127.0.0.1), and the password must never be reused in a deployed environment.
 - Continuous integration (planned for Phase 4) will need a PostgreSQL service for the tests.
 
 **Guidance**

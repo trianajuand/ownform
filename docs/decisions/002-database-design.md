@@ -558,7 +558,7 @@ Each test file builds its own temporary schema (`CREATE SCHEMA test_<random>`), 
 
 **Mutation check:** the migration was broken on purpose in five ways (no role check, a wrong `UNIQUE`, `NUMERIC` instead of `DOUBLE PRECISION`, no `CASCADE` from sets to workouts, a case-sensitive email index). Each one made at least one test fail, and the original migration was restored afterwards.
 
-**Not verified yet:** PostgreSQL 17, the version in the Docker Compose file. The author's environment had no Docker, so the first `npm test` run against the container is that verification.
+ **PostgreSQL 17:** the 57 tests also pass against the `postgres:17` container defined in `docker-compose.yml` (run by the project owner on 2026-10-29).
 
 **Index tests:** with tiny tables PostgreSQL prefers reading the whole table, so those tests switch sequential scans off inside a transaction (`SET LOCAL enable_seqscan = off`). They prove that each index **can** serve its query, not that the planner will choose it with real data volumes.
 

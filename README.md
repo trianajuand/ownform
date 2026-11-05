@@ -8,7 +8,7 @@ The long-term vision is to make Ownform a mobile application that becomes part o
 
 ## Status
 
-**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (core) is in progress: the XP engine and the PostgreSQL connection with its migration runner are done and tested. Authentication is next.
+**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (core) is in progress: the XP engine, the PostgreSQL connection with its migration runner, and the Express app skeleton are done. Authentication is next.
 
 See the [Roadmap](#roadmap) for the planned development phases.
 
@@ -95,7 +95,7 @@ See [`docs/decisions/`](docs/decisions/) for architecture decision records expla
 
 ## Repository Structure
 
-Items marked *(planned)* do not exist yet.
+Items marked *(planned)* do not exist yet. The backend is organized by module, then by layer (see [005 Project structure](docs/decisions/005-project-structure.md)).
 
 ```text
 ownform/
@@ -105,14 +105,18 @@ ownform/
 │   ├── docker-compose.yml          # local PostgreSQL
 │   ├── .env.example                # copy to .env (not committed)
 │   ├── src/
+│   │   ├── app.js                  # builds the Express app and wires the modules
+│   │   ├── server.js               # starts the HTTP server
 │   │   ├── config/                 # XP rules configuration
 │   │   ├── core/xp-engine/         # pure XP and level logic
 │   │   ├── db/                     # connection, migration runner, migrations/
-│   │   ├── modules/                # auth, character, gym (planned)
-│   │   ├── middlewares/            # (planned)
-│   │   ├── app.js                  # (planned)
-│   │   └── server.js               # (planned)
-│   └── tests/                      # core/, db/ and helpers/
+│   │   ├── middlewares/            # not-found, error handler (more planned)
+│   │   └── modules/
+│   │       ├── health/             # routes, controller, service, repository
+│   │       ├── auth/               # (planned)
+│   │       ├── character/          # (planned)
+│   │       └── gym/                # (planned)
+│   └── tests/                      # mirrors src/, plus helpers/
 ├── frontend/                       # (planned)
 └── docs/
     └── decisions/                  # architecture decision records, database design, XP rules
@@ -182,7 +186,15 @@ npm run format:check
 
 The database tests need the container to be running. Each test file works in its own temporary schema, so tests never touch your development data.
 
-**The application server and API have not been implemented yet**, so there is no server to start at this stage.
+### Run the API
+
+With the database running, start the API in development mode (it restarts when you save a file):
+
+```bash
+npm run dev
+```
+
+Then open `http://localhost:3000/api/health`. It answers `{"status":"ok"}` when the API and the database work. Only the health check exists so far.
 
 ## Documentation
 
@@ -194,6 +206,7 @@ Project documentation and technical decisions will be maintained alongside the c
   - [001 Modular monolith](docs/decisions/001-architecture.md)
   - [003 ES modules](docs/decisions/003-es-modules.md)
   - [004 PostgreSQL with Docker](docs/decisions/004-postgresql.md)
+  - [005 Project structure and module conventions](docs/decisions/005-project-structure.md)
 
 ## Roadmap
 

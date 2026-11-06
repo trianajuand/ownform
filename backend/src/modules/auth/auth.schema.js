@@ -1,19 +1,11 @@
 import { z } from 'zod';
 
 // Reusable email validation schema
-const emailSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .pipe(z.email().max(254));
+const emailSchema = z.string().trim().toLowerCase().pipe(z.email().max(254));
 
 // User registration schema
 export const registerSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(100, 'Name cannot exceed 100 characters'),
+  name: z.string().trim().min(1, 'Name is required').max(100, 'Name cannot exceed 100 characters'),
 
   email: emailSchema,
 
@@ -29,7 +21,5 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({
   email: emailSchema,
 
-  password: z
-    .string()
-    .min(1, 'Password is required'),
+  password: z.string().min(1, 'Password is required'),
 });

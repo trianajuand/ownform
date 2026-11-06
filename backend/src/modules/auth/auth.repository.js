@@ -27,8 +27,6 @@ export function createAuthRepository({ pool }) {
          RETURNING id, name, email, role`,
         [name, email, passwordHash],
       );
-
-      return rows[0];
     },
   };
 }

@@ -1,5 +1,4 @@
-
-export const createAuthController = ({ authService }) => {
+export function createAuthController({ authService }) {
   const register = async (req, res) => {
     const user = await authService.register(req.body);
 
@@ -16,4 +15,4 @@ export const createAuthController = ({ authService }) => {
     register,
     login,
   };
-};
+}

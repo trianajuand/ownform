@@ -1,5 +1,6 @@
 import express from 'express';
 import { createHealthModule } from './modules/health/index.js';
+import { createAuthModule } from './modules/auth/index.js';
 import { notFound } from './middlewares/not-found.js';
 import { errorHandler } from './middlewares/error-handler.js';
 
@@ -13,8 +14,10 @@ export function createApp({ pool }) {
   app.use(express.json());
 
   const health = createHealthModule({ pool });
+  const auth = createAuthModule({ pool });
 
   app.use('/api/health', health.router);
+  app.use('/api/auth', auth.router);
 
   // Order matters: these two go last, after every route.
   app.use(notFound);

@@ -1,6 +1,7 @@
 // Runs "callback" inside a database transaction: everything it does is saved together
 // (COMMIT) or undone together (ROLLBACK).
 
+//basically the function exceture all operations in postgres, if one of them fails undoes everything
 export async function withTransaction(pool, callback) {
   const client = await pool.connect();
 

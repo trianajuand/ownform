@@ -8,7 +8,7 @@ The long-term vision is to make Ownform a mobile application that becomes part o
 
 ## Status
 
-**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (core) is in progress: the XP engine, the PostgreSQL connection with its migration runner, and the Express app skeleton are done. Authentication is next.
+**Currently under development.** Phase 0 (setup and design) is complete. Phase 1 (core) is in progress: the XP engine, the PostgreSQL connection with its migration runner, the Express app skeleton, and user registration and login are done. Registration creates the user, its gym stats row and its gym profile in one database transaction. There is no token yet, so login only checks the credentials. The JWT token, the cookie and the `authenticate` middleware are next.
 
 See the [Roadmap](#roadmap) for the planned development phases.
 
@@ -52,14 +52,14 @@ The project will introduce technologies incrementally. The table below distingui
 | Runtime | Node.js | Already in the repository |
 | Code quality | ESLint | Already in the repository |
 | Formatting | Prettier | Already in the repository |
-| Backend framework | Express | Planned |
+| Backend framework | Express | Already in the repository |
 | Database | PostgreSQL 17 | Already in the repository |
 | Database driver | `pg` (node-postgres) | Already in the repository |
 | Local development | Docker Compose | Already in the repository |
-| Input validation | Zod | Planned |
-| Password hashing | bcrypt | Planned |
+| Input validation | Zod | Already in the repository |
+| Password hashing | bcrypt | Already in the repository |
 | Authentication | JWT | Planned |
-| Testing | `node:test` | Already in the repository |
+| Testing | `node:test` and supertest | Already in the repository |
 | Continuous integration | GitHub Actions | Planned |
 | Backend language | TypeScript | Planned for a later phase |
 | Frontend framework | React | Planned for a later phase |
@@ -68,11 +68,13 @@ The initial implementation will use JavaScript and plain HTML, CSS, and JavaScri
 
 ## Architecture
 
-Ownform will follow a **modular monolith** architecture: one deployable application organized into modules with clear responsibilities. The backend will separate routes, controllers, services, and repositories so that HTTP handling, business logic, and database access remain independent.
+Ownform follows a **modular monolith** architecture: one deployable application organized into modules with clear responsibilities. The backend separates routes, controllers, services, and repositories so that HTTP handling, business logic, and database access remain independent.
 
-The XP engine will be pure domain logic. It will calculate XP, levels, personal records, and applicable limits without depending on Express or the database, making it easier to test and maintain.
+The XP engine is pure domain logic. It calculates XP, levels, personal records, and applicable limits without depending on Express or the database, making it easier to test and maintain.
 
 PostgreSQL is the database. It runs in a Docker container for local development, and the SQL lives in numbered migration files applied by a small migration runner.
+
+A use case that touches several modules, such as registration, runs in one database transaction. The service that starts the use case opens the transaction and passes the same database client to the services of the other modules (see [005 Project structure](docs/decisions/005-project-structure.md)).
 
 ### High-level architecture
 
@@ -108,14 +110,14 @@ ownform/
 │   │   ├── app.js                  # builds the Express app and wires the modules
 │   │   ├── server.js               # starts the HTTP server
 │   │   ├── config/                 # XP rules configuration
-│   │   ├── core/xp-engine/         # pure XP and level logic
-│   │   ├── db/                     # connection, migration runner, migrations/
-│   │   ├── middlewares/            # not-found, error handler (more planned)
+│   │   ├── core/                   # pure logic: AppError and the XP engine (xp-engine/)
+│   │   ├── db/                     # connection, migration runner, transaction helper, migrations/
+│   │   ├── middlewares/            # not-found, error handler, request validation (more planned)
 │   │   └── modules/
 │   │       ├── health/             # routes, controller, service, repository
-│   │       ├── auth/               # (planned)
-│   │       ├── character/          # (planned)
-│   │       └── gym/                # (planned)
+│   │       ├── auth/               # register and login (routes, controller, service, repository, schema)
+│   │       ├── character/          # stats table: activates a module for a user (no routes yet)
+│   │       └── gym/                # gym profile (no routes yet, workouts planned)
 │   └── tests/                      # mirrors src/, plus helpers/
 ├── frontend/                       # (planned)
 └── docs/
@@ -194,7 +196,23 @@ With the database running, start the API in development mode (it restarts when y
 npm run dev
 ```
 
-Then open `http://localhost:3000/api/health`. It answers `{"status":"ok"}` when the API and the database work. Only the health check exists so far.
+Then open `http://localhost:3000/api/health`. It answers `{"status":"ok"}` when the API and the database work.
+
+### Available endpoints
+
+| Method and path | Body | Success | Errors |
+|---|---|---|---|
+| `GET /api/health` | none | `200` `{ "status": "ok" }` | `500` when the database fails |
+| `POST /api/auth/register` | `name`, `email`, `password`, `trainingFocus` (`strength` or `hypertrophy`) | `201` `{ "user": { id, name, email, role } }` | `400` `VALIDATION_ERROR`, `409` `EMAIL_TAKEN` |
+| `POST /api/auth/login` | `email`, `password` | `200` `{ "user": { id, name, email, role } }` | `400` `VALIDATION_ERROR`, `401` `INVALID_CREDENTIALS` |
+
+Every error answers with the same shape: `{ "error": { "code": "...", "message": "..." } }`, plus `details` (the invalid fields) for validation errors. Authentication tokens are not implemented yet, so login only checks the credentials.
+
+Example with PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/auth/register -ContentType 'application/json' -Body '{"name":"Test","email":"test@example.com","password":"secret123","trainingFocus":"strength"}'
+```
 
 ## Documentation
 

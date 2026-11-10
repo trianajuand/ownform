@@ -1,14 +1,18 @@
+
 import { createAuthRepository } from './auth.repository.js';
 import { createAuthService } from './auth.service.js';
 import { createAuthController } from './auth.controller.js';
 import { createAuthRouter } from './auth.routes.js';
 
-// Public entry point of the module. It wires the layers together
-// (repository -> service -> controller -> router) and exposes only the router.
-export function createAuthModule({ pool }) {
+import { withTransaction } from '../../db/transaction.js';
+
+export function createAuthModule({ pool, characterService, gymService }) {
   const authRepository = createAuthRepository({ pool });
-  const authService = createAuthService({ authRepository });
+  const runInTransaction = (callback) => withTransaction(pool, callback);
+  const authService = createAuthService({authRepository,characterService,gymService,runInTransaction});
   const authController = createAuthController({ authService });
 
-  return { router: createAuthRouter({ authController }) };
+  return {
+    router: createAuthRouter({ authController })
+  };
 }
